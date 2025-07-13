@@ -1,0 +1,68 @@
+---
+layout: default
+---
+
+<article class="post">
+  <header class="post-header">
+    <div class="language-toggle">
+      <button onclick="toggleLanguage()" id="lang-toggle-btn">中文</button>
+    </div>
+    <h1 class="post-title">{{ page.title }}</h1>
+    <p class="post-meta">{{ page.date | date: "%B %d, %Y" }}</p>
+  </header>
+
+  <div class="post-content">
+    {{ content }}
+  </div>
+</article>
+
+<script>
+// Detect if this is a Chinese page by checking page.lang or URL
+const isChinesePage = '{{ page.lang }}' === 'zh' || window.location.pathname.includes('-zh');
+
+// Set initial button text based on current page language
+document.addEventListener('DOMContentLoaded', function() {
+  const toggleBtn = document.getElementById('lang-toggle-btn');
+  if (isChinesePage) {
+    toggleBtn.textContent = 'English';
+  } else {
+    toggleBtn.textContent = '中文';
+  }
+});
+
+function toggleLanguage() {
+  // Simply redirect to the other language version
+  const currentPath = window.location.pathname;
+  
+  if (isChinesePage) {
+    // We're on Chinese page, go to English
+    const englishUrl = currentPath.replace('-zh.html', '.html');
+    window.location.href = englishUrl;
+  } else {
+    // We're on English page, go to Chinese
+    const chineseUrl = currentPath.replace('.html', '-zh.html');
+    window.location.href = chineseUrl;
+  }
+}
+</script>
+
+<style>
+.language-toggle {
+  float: right;
+  margin-bottom: 1rem;
+}
+
+.language-toggle button {
+  background: #3498db;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.language-toggle button:hover {
+  background: #2980b9;
+}
+</style>
