@@ -101,6 +101,19 @@
             padding-top: 3rem;
         }
     </style>
+    
+    <!-- Google Analytics -->
+    {% unless jekyll.environment == "development" %}
+        {% unless site.url contains "localhost" or site.url contains "127.0.0.1" %}
+            <script async src="https://www.googletagmanager.com/gtag/js?id=G-VCTYL37HRL"></script>
+            <script>
+                window.dataLayer = window.dataLayer || [];
+                function gtag(){dataLayer.push(arguments);}
+                gtag('js', new Date());
+                gtag('config', 'G-VCTYL37HRL');
+            </script>
+        {% endunless %}
+    {% endunless %}
 </head>
 <body>
     <header class="site-header">
