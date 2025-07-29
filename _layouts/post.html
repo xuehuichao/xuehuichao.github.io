@@ -4,7 +4,7 @@ layout: default
 
 <article class="post">
   <header class="post-header">
-    <div class="language-toggle">
+    <div class="language-toggle" id="language-toggle" style="display: none;">
       <button onclick="toggleLanguage()" id="lang-toggle-btn">中文</button>
     </div>
     <h1 class="post-title">{{ page.title }}</h1>
@@ -20,15 +20,47 @@ layout: default
 // Detect if this is a Chinese page by checking page.lang or URL
 const isChinesePage = '{{ page.lang }}' === 'zh' || window.location.pathname.includes('-zh');
 
-// Set initial button text based on current page language
+// Set initial button text and visibility based on current page language
 document.addEventListener('DOMContentLoaded', function() {
   const toggleBtn = document.getElementById('lang-toggle-btn');
-  if (isChinesePage) {
-    toggleBtn.textContent = 'English';
-  } else {
-    toggleBtn.textContent = '中文';
-  }
+  const toggleDiv = document.getElementById('language-toggle');
+  
+  // Check if alternate language version exists
+  checkAlternateLanguageExists().then(exists => {
+    if (exists) {
+      // Show the toggle button
+      toggleDiv.style.display = 'block';
+      
+      // Set button text based on current page
+      if (isChinesePage) {
+        toggleBtn.textContent = 'English';
+      } else {
+        toggleBtn.textContent = '中文';
+      }
+    }
+    // If alternate doesn't exist, button stays hidden (display: none)
+  });
 });
+
+async function checkAlternateLanguageExists() {
+  const currentPath = window.location.pathname;
+  let alternateUrl;
+  
+  if (isChinesePage) {
+    // We're on Chinese page, check if English version exists
+    alternateUrl = currentPath.replace('-zh.html', '.html').replace('-zh/', '/');
+  } else {
+    // We're on English page, check if Chinese version exists
+    alternateUrl = currentPath.replace('.html', '-zh.html').replace(/\/$/, '-zh.html');
+  }
+  
+  try {
+    const response = await fetch(alternateUrl, { method: 'HEAD' });
+    return response.ok;
+  } catch (error) {
+    return false;
+  }
+}
 
 function toggleLanguage() {
   // Simply redirect to the other language version
