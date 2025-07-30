@@ -1,8 +1,6 @@
 ---
-layout: post
+layout: default
 title: "Bay Area Trail Explorer"
-date: 2025-07-27
-categories: [trails, hiking, bay-area]
 ---
 
 <style>
@@ -162,6 +160,31 @@ categories: [trails, hiking, bay-area]
 </div>
 
 <script>
+// Google API Configuration (injected by Jekyll)
+const GOOGLE_API_CONFIG = {
+    mapsApiKey: '{{ site.google_api.maps_key }}',
+    weatherApiKey: '{{ site.google_api.weather_key }}',
+    weatherApiBaseUrl: 'https://weather.googleapis.com/v1/forecast/days:lookup'
+};
+
+// Centralized weather API fetching function
+async function fetchWeatherForecast(latitude, longitude, days = 10) {
+    const url = `${GOOGLE_API_CONFIG.weatherApiBaseUrl}?key=${GOOGLE_API_CONFIG.weatherApiKey}&location.latitude=${latitude}&location.longitude=${longitude}&days=${days}&pageSize=${days}`;
+    
+    try {
+        const response = await fetch(url);
+        if (response.ok) {
+            return await response.json();
+        } else {
+            console.log('Weather API error:', response.status, response.statusText);
+            return null;
+        }
+    } catch (error) {
+        console.error('Weather API error:', error);
+        return null;
+    }
+}
+
 let map;
 let markerCluster;
 let trails = [];
@@ -201,6 +224,9 @@ function initMap() {
     document.getElementById('loading').style.display = 'none';
 }
 
+// Make initMap available globally for Google Maps callback
+window.initMap = initMap;
+
 async function loadTrailData() {
     try {
         const response = await fetch('/trails/bay_area_trails.json');
@@ -223,6 +249,8 @@ async function loadTrailData() {
         document.getElementById('trip-date').addEventListener('input', function() {
             updateTripDateLabel();
             applyFilters();
+            updateAllWeatherDisplays();
+            refreshTemperatureOverlay();
         });
         
         // Set default to upcoming Saturday and update labels
@@ -376,11 +404,13 @@ function createInfoWindowContent(trail) {
             <div class="weather-info" id="weather-${trail.latitude}-${trail.longitude}">
                 Loading weather...
             </div>
-            <div style="margin-top: 8px;">
-                <a href="${trail.alltrails_url}" target="_blank" style="color: #28a745; font-weight: bold;">
-                    View on AllTrails →
-                </a>
-            </div>
+            ${trail.alltrails_url ? `
+                <div style="margin-top: 8px;">
+                    <a href="${trail.alltrails_url}" target="_blank" style="color: #28a745; font-weight: bold;">
+                        View on AllTrails →
+                    </a>
+                </div>
+            ` : ''}
         </div>
     `;
 }
@@ -395,27 +425,12 @@ async function loadWeatherForTrail(trail, marker) {
         return;
     }
     
-    try {
-        // Using Google Weather API - will work after deployment with proper domain setup
-        const apiKey = 'AIzaSyCz-JlN59A7S_6SKYL0K6sIPXEMYU8QdWs'; // Replace with actual key
-        
-        const response = await fetch(
-            `https://weather.googleapis.com/v1/forecast/days:lookup?key=${apiKey}&location.latitude=${trail.latitude}&location.longitude=${trail.longitude}&days=10&pageSize=10`
-        );
-        
-        if (response.ok) {
-            const forecast = await response.json();
-            console.log('Weather API response:', forecast); // Debug log
-            weatherCache[cacheKey] = forecast;
-            updateWeatherDisplay(trail, forecast, tripDate);
-        } else {
-            console.log('Weather API error:', response.status, response.statusText);
-            updateWeatherDisplay(trail, null, tripDate);
-        }
-    } catch (error) {
-        console.error('Weather API error:', error);
-        updateWeatherDisplay(trail, null, tripDate);
+    const forecast = await fetchWeatherForecast(trail.latitude, trail.longitude);
+    if (forecast) {
+        console.log('Weather API response:', forecast); // Debug log
+        weatherCache[cacheKey] = forecast;
     }
+    updateWeatherDisplay(trail, forecast, tripDate);
 }
 
 function updateWeatherDisplay(trail, forecast, tripDate) {
@@ -617,6 +632,93 @@ function updateTrailLabelsVisibility() {
     });
 }
 
+// Update all weather displays when date changes
+function updateAllWeatherDisplays() {
+    const tripDate = parseInt(document.getElementById('trip-date').value);
+    
+    // Update all visible weather displays
+    filteredTrails.forEach(trail => {
+        const weatherDiv = document.getElementById(`weather-${trail.latitude}-${trail.longitude}`);
+        if (weatherDiv) {
+            const cacheKey = `${trail.latitude},${trail.longitude}-${tripDate}`;
+            const forecast = weatherCache[cacheKey];
+            updateWeatherDisplay(trail, forecast, tripDate);
+        }
+    });
+}
+
+// Create temperature overlay circles from temperature data
+function createTemperatureCircles(temperatureData) {
+    temperatureData.forEach(dataPoint => {
+        const temp = (dataPoint.weight * 25) + 10; // Convert back to Celsius
+        const color = getTemperatureColor(temp);
+        
+        const circle = new google.maps.Circle({
+            strokeColor: color,
+            strokeOpacity: 0.8,
+            strokeWeight: 2,
+            fillColor: color,
+            fillOpacity: 0.35,
+            map: map,
+            center: dataPoint.location,
+            radius: 8000 // 8km radius
+        });
+        
+        // Add click listener to show temperature
+        const infoWindow = new google.maps.InfoWindow({
+            content: `<div style="padding: 5px;"><strong>${Math.round(temp)}°C</strong><br>High temperature for selected date</div>`
+        });
+        
+        circle.addListener('click', (event) => {
+            infoWindow.setPosition(event.latLng);
+            infoWindow.open(map);
+        });
+        
+        temperatureCircles.push(circle);
+    });
+}
+
+// Update temperature overlay button state
+function updateTemperatureButtonState(hasData) {
+    const button = document.getElementById('heatmap-toggle');
+    
+    if (hasData) {
+        button.textContent = 'Hide Temperature Overlay';
+        button.style.background = '#dc3545';
+        
+        // Add legend
+        addTemperatureLegend();
+    } else {
+        button.textContent = 'Temperature Data Unavailable';
+        button.style.background = '#6c757d';
+        setTimeout(() => {
+            button.textContent = 'Show Temperature Overlay';
+            button.style.background = '#ff6b35';
+        }, 2000);
+    }
+}
+
+// Refresh temperature overlay if it's currently visible
+function refreshTemperatureOverlay() {
+    if (temperatureCircles.length > 0) {
+        // Hide current overlay
+        temperatureCircles.forEach(circle => circle.setMap(null));
+        temperatureCircles = [];
+        
+        // Reload with new date
+        const button = document.getElementById('heatmap-toggle');
+        button.textContent = 'Loading Temperature Data...';
+        button.style.background = '#6c757d';
+        
+        loadTemperatureHeatmap().then(temperatureData => {
+            if (temperatureData.length > 0) {
+                createTemperatureCircles(temperatureData);
+            }
+            updateTemperatureButtonState(temperatureData.length > 0);
+        });
+    }
+}
+
 // Temperature heatmap functions
 async function loadTemperatureHeatmap() {
     const tripDate = parseInt(document.getElementById('trip-date').value);
@@ -664,19 +766,14 @@ async function loadTemperatureHeatmap() {
             {lat: 37.3382, lng: -121.8863}  // San Jose
         ];
         
-        const apiKey = 'AIzaSyCz-JlN59A7S_6SKYL0K6sIPXEMYU8QdWs';
-        
         for (const point of strategicPoints) {
             try {
                 const cacheKey = `${point.lat},${point.lng}-${tripDate}`;
                 
                 if (!weatherCache[cacheKey]) {
-                    const response = await fetch(
-                        `https://weather.googleapis.com/v1/forecast/days:lookup?key=${apiKey}&location.latitude=${point.lat}&location.longitude=${point.lng}&days=10&pageSize=10`
-                    );
+                    const forecast = await fetchWeatherForecast(point.lat, point.lng);
                     
-                    if (response.ok) {
-                        const forecast = await response.json();
+                    if (forecast) {
                         weatherCache[cacheKey] = forecast;
                         
                         if (forecast.forecastDays && forecast.forecastDays[tripDate]) {
@@ -730,53 +827,19 @@ function toggleHeatmap() {
         
         loadTemperatureHeatmap().then(temperatureData => {
             if (temperatureData.length > 0) {
-                temperatureData.forEach(dataPoint => {
-                    const temp = (dataPoint.weight * 25) + 10; // Convert back to Celsius
-                    const color = getTemperatureColor(temp);
-                    
-                    const circle = new google.maps.Circle({
-                        strokeColor: color,
-                        strokeOpacity: 0.8,
-                        strokeWeight: 2,
-                        fillColor: color,
-                        fillOpacity: 0.35,
-                        map: map,
-                        center: dataPoint.location,
-                        radius: 8000 // 8km radius
-                    });
-                    
-                    // Add click listener to show temperature
-                    const infoWindow = new google.maps.InfoWindow({
-                        content: `<div style="padding: 5px;"><strong>${Math.round(temp)}°C</strong><br>High temperature for selected date</div>`
-                    });
-                    
-                    circle.addListener('click', (event) => {
-                        infoWindow.setPosition(event.latLng);
-                        infoWindow.open(map);
-                    });
-                    
-                    temperatureCircles.push(circle);
-                });
-                
-                button.textContent = 'Hide Temperature Overlay';
-                button.style.background = '#dc3545';
-                
-                // Add legend
-                addTemperatureLegend();
-                
-            } else {
-                button.textContent = 'Temperature Data Unavailable';
-                button.style.background = '#6c757d';
-                setTimeout(() => {
-                    button.textContent = 'Show Temperature Overlay';
-                    button.style.background = '#ff6b35';
-                }, 2000);
+                createTemperatureCircles(temperatureData);
             }
+            updateTemperatureButtonState(temperatureData.length > 0);
         });
     }
 }
 
 function addTemperatureLegend() {
+    // Only add legend if it doesn't already exist
+    if (document.getElementById('temperature-legend')) {
+        return;
+    }
+    
     const legend = document.createElement('div');
     legend.id = 'temperature-legend';
     legend.innerHTML = `
@@ -802,7 +865,7 @@ function addTemperatureLegend() {
                 <div style="width: 20px; height: 15px; background: #ffff00; margin-right: 5px;"></div>
                 <span style="font-size: 12px;">24-27°C</span>
             </div>
-            <div style="display: flex; align-items: center; margin: 2px 0;">
+            <div style="display: flex; align-items: center; margin: 2px 0;">  
                 <div style="width: 20px; height: 15px; background: #ff9900; margin-right: 5px;"></div>
                 <span style="font-size: 12px;">27-30°C</span>
             </div>
@@ -823,6 +886,6 @@ window.addEventListener('load', loadURLParams);
 <!-- Load Google Maps API with MarkerClusterer -->
 <script src="https://unpkg.com/@googlemaps/markerclusterer/dist/index.min.js"></script>
 <script async defer 
-        src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCz-JlN59A7S_6SKYL0K6sIPXEMYU8QdWs&callback=initMap">
+        src="https://maps.googleapis.com/maps/api/js?key={{ site.google_api.maps_key }}&callback=initMap">
 </script>
 

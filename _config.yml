@@ -13,6 +13,11 @@ plugins:
   - jekyll-feed
   - jekyll-sitemap
 
+# Google API Keys (production fallbacks)
+google_api:
+  maps_key: "AIzaSyCz-JlN59A7S_6SKYL0K6sIPXEMYU8QdWs"
+  weather_key: "AIzaSyCz-JlN59A7S_6SKYL0K6sIPXEMYU8QdWs"
+
 # Exclude from processing
 exclude:
   - Gemfile
@@ -22,3 +27,5 @@ exclude:
   - vendor/cache/
   - vendor/gems/
   - vendor/ruby/
+  - api_keys.json
+  - _config_dev.yml

@@ -1,0 +1,7 @@
+# Development API keys configuration
+# Copy this file to _config_dev.yml and add your development API keys
+# _config_dev.yml is gitignored and won't be committed
+
+google_api:
+  maps_key: "YOUR_DEV_MAPS_API_KEY_HERE"
+  weather_key: "YOUR_DEV_WEATHER_API_KEY_HERE"
