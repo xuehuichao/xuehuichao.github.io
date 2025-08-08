@@ -203,7 +203,8 @@ function initMap() {
     map = new google.maps.Map(document.getElementById('map'), {
         zoom: 10,
         center: bayAreaCenter,
-        mapTypeId: 'terrain'
+        mapTypeId: 'terrain',
+        mapId: '{{ site.google_api.maps_id }}' // Required for AdvancedMarkerElement
     });
     
     // Initialize MarkerClusterer
@@ -212,9 +213,17 @@ function initMap() {
         markers: []
     });
     
-    // Add zoom change listener to show/hide trail labels
+    // Add listeners to update trail labels when map changes
     map.addListener('zoom_changed', () => {
         updateTrailLabelsVisibility();
+    });
+    
+    map.addListener('bounds_changed', () => {
+        // Debounce bounds changes to avoid excessive updates during panning
+        clearTimeout(window.boundsUpdateTimeout);
+        window.boundsUpdateTimeout = setTimeout(() => {
+            updateTrailLabelsVisibility();
+        }, 300);
     });
     
     // Load trail data
@@ -300,38 +309,43 @@ function createMarkers() {
     trailLabels = [];
     
     filteredTrails.forEach(trail => {
-        const marker = new google.maps.Marker({
+        // Create marker element with custom styling
+        const markerElement = document.createElement('div');
+        markerElement.innerHTML = createMarkerHTML(trail.difficulty);
+        
+        const marker = new google.maps.marker.AdvancedMarkerElement({
             position: { lat: trail.latitude, lng: trail.longitude },
-            title: trail.name,
-            icon: getMarkerIcon(trail.difficulty)
+            content: markerElement,
+            title: trail.name
         });
         
-        // Create simple text label
-        const difficultyColor = {
-            'Easy': '#22c55e',
-            'Moderate': '#f59e0b', 
-            'Hard': '#ef4444'
-        }[trail.difficulty] || '#6b7280';
+        // Create text label element
+        const labelElement = document.createElement('div');
+        labelElement.innerHTML = `
+            <div style="
+                background: rgba(255, 255, 255, 0.9);
+                padding: 4px 8px;
+                border-radius: 4px;
+                border: 1px solid #ddd;
+                font-size: 11px;
+                font-weight: bold;
+                font-family: Arial, sans-serif;
+                color: #2c5530;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+                white-space: nowrap;
+                text-align: center;
+            ">
+                ${trail.name}<br>
+                <span style="color: ${getDifficultyColor(trail.difficulty)}; font-size: 10px;">
+                    ${trail.difficulty || ''}
+                </span>
+            </div>
+        `;
         
-        const label = new google.maps.Marker({
+        const label = new google.maps.marker.AdvancedMarkerElement({
             position: { lat: trail.latitude, lng: trail.longitude },
-            map: null, // Will be set based on zoom level
-            icon: {
-                url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
-                    <svg xmlns="http://www.w3.org/2000/svg" width="1" height="1">
-                        <rect width="1" height="1" fill="transparent"/>
-                    </svg>
-                `),
-                anchor: new google.maps.Point(0, 0)
-            },
-            label: {
-                text: `${trail.name}${trail.difficulty ? `\n(${trail.difficulty})` : ''}`,
-                color: '#2c5530',
-                fontSize: '11px',
-                fontWeight: 'bold',
-                fontFamily: 'Arial, sans-serif'
-            },
-            zIndex: 1000
+            content: labelElement,
+            map: null // Will be set based on zoom level and density
         });
         
         const infoWindow = new google.maps.InfoWindow({
@@ -361,31 +375,37 @@ function createMarkers() {
     updateTrailLabelsVisibility();
 }
 
-function getMarkerIcon(difficulty) {
+function createMarkerHTML(difficulty) {
+    const color = getDifficultyColor(difficulty);
+    
+    return `
+        <div style="
+            width: 16px;
+            height: 16px;
+            background-color: ${color};
+            border: 2px solid white;
+            border-radius: 50%;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        "></div>
+    `;
+}
+
+function getDifficultyColor(difficulty) {
     const colors = {
         'Easy': '#28a745',      // Green
         'Moderate': '#ffc107',  // Yellow  
         'Hard': '#dc3545'       // Red
     };
     
-    const color = colors[difficulty] || '#6c757d';
-    
-    return {
-        path: google.maps.SymbolPath.CIRCLE,
-        fillColor: color,
-        fillOpacity: 0.8,
-        strokeColor: '#fff',
-        strokeWeight: 2,
-        scale: 8
-    };
+    return colors[difficulty] || '#6c757d';
 }
 
 function createInfoWindowContent(trail) {
-    const features = trail.features.slice(0, 4).map(f => 
+    const features = (trail.features || []).slice(0, 4).map(f => 
         `<span class="feature-tag">${f}</span>`
     ).join('');
     
-    const keywords = trail.review_keywords.slice(0, 3).join(', ');
+    const keywords = (trail.review_keywords || []).slice(0, 3).join(', ');
     
     return `
         <div class="trail-info">
@@ -507,18 +527,23 @@ function findTrailsNearMe() {
             map.setZoom(12);
             
             // Add user location marker
-            new google.maps.Marker({
+            const userMarkerElement = document.createElement('div');
+            userMarkerElement.innerHTML = `
+                <div style="
+                    width: 20px;
+                    height: 20px;
+                    background-color: #4285f4;
+                    border: 3px solid white;
+                    border-radius: 50%;
+                    box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+                "></div>
+            `;
+            
+            new google.maps.marker.AdvancedMarkerElement({
                 position: userLocation,
                 map: map,
-                title: 'Your Location',
-                icon: {
-                    path: google.maps.SymbolPath.CIRCLE,
-                    fillColor: '#4285f4',
-                    fillOpacity: 1,
-                    strokeColor: '#fff',
-                    strokeWeight: 3,
-                    scale: 10
-                }
+                content: userMarkerElement,
+                title: 'Your Location'
             });
         });
     } else {
@@ -621,15 +646,97 @@ function updateElevationLabel() {
 
 function updateTrailLabelsVisibility() {
     const zoom = map.getZoom();
-    const showLabels = zoom >= 12; // Show labels when zoomed in enough
+    const shouldShowLabels = zoom >= 12;
     
-    trailLabels.forEach(label => {
-        if (showLabels) {
+    if (!shouldShowLabels) {
+        // Hide all labels when zoomed out
+        trailLabels.forEach(label => label.setMap(null));
+        return;
+    }
+    
+    // Get current map bounds
+    const bounds = map.getBounds();
+    if (!bounds) return;
+    
+    // Filter trails that are visible in current bounds
+    const visibleTrails = filteredTrails.filter((trail, index) => {
+        const position = new google.maps.LatLng(trail.latitude, trail.longitude);
+        return bounds.contains(position);
+    });
+    
+    // Calculate density-based visibility
+    const visibleLabelsIndices = calculateOptimalLabelVisibility(visibleTrails, zoom);
+    
+    // Show/hide labels based on density calculation
+    trailLabels.forEach((label, index) => {
+        const trail = filteredTrails[index];
+        const isVisible = visibleLabelsIndices.has(index) && 
+                         bounds.contains(new google.maps.LatLng(trail.latitude, trail.longitude));
+        
+        if (isVisible) {
             label.setMap(map);
         } else {
             label.setMap(null);
         }
     });
+}
+
+function calculateOptimalLabelVisibility(visibleTrails, zoom) {
+    const visibleIndices = new Set();
+    
+    // Calculate minimum distance between labels based on zoom level
+    const minDistance = getMinimumLabelDistance(zoom);
+    
+    // Sort trails by rating to prioritize better trails
+    const sortedTrails = visibleTrails
+        .map((trail, originalIndex) => ({
+            trail,
+            originalIndex: filteredTrails.indexOf(trail),
+            rating: trail.stars || 0
+        }))
+        .sort((a, b) => b.rating - a.rating);
+    
+    // Greedy algorithm to select non-overlapping labels
+    const selectedPositions = [];
+    
+    for (const trailInfo of sortedTrails) {
+        const { trail, originalIndex } = trailInfo;
+        const position = { lat: trail.latitude, lng: trail.longitude };
+        
+        // Check if this position is far enough from already selected ones
+        const isFarEnough = selectedPositions.every(selectedPos => {
+            const distance = calculateDistance(position, selectedPos);
+            return distance >= minDistance;
+        });
+        
+        if (isFarEnough) {
+            selectedPositions.push(position);
+            visibleIndices.add(originalIndex);
+        }
+    }
+    
+    return visibleIndices;
+}
+
+function getMinimumLabelDistance(zoom) {
+    // Minimum distance in kilometers based on zoom level
+    // Higher zoom = closer trails can show labels
+    if (zoom >= 16) return 0.5;  // 500m
+    if (zoom >= 14) return 1.0;  // 1km  
+    if (zoom >= 13) return 2.0;  // 2km
+    return 3.0; // 3km
+}
+
+function calculateDistance(pos1, pos2) {
+    // Calculate distance in kilometers using Haversine formula
+    const R = 6371; // Earth's radius in km
+    const dLat = (pos2.lat - pos1.lat) * Math.PI / 180;
+    const dLng = (pos2.lng - pos1.lng) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(pos1.lat * Math.PI / 180) * Math.cos(pos2.lat * Math.PI / 180) *
+              Math.sin(dLng/2) * Math.sin(dLng/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
 }
 
 // Update all weather displays when date changes
@@ -763,7 +870,9 @@ async function loadTemperatureHeatmap() {
             {lat: 37.4636, lng: -122.4286}, // Half Moon Bay
             {lat: 37.5074, lng: -122.2594}, // Redwood City
             {lat: 37.7749, lng: -122.4194}, // San Francisco
-            {lat: 37.3382, lng: -121.8863}  // San Jose
+            {lat: 37.3382, lng: -121.8863}, // San Jose
+            {lat: 37.6140, lng: -122.4869}, // Pacifica
+            {lat: 37.8215, lng: -122.2592}  // Reinhardt Redwood Regional Park (Oakland Hills)
         ];
         
         for (const point of strategicPoints) {
@@ -886,6 +995,6 @@ window.addEventListener('load', loadURLParams);
 <!-- Load Google Maps API with MarkerClusterer -->
 <script src="https://unpkg.com/@googlemaps/markerclusterer/dist/index.min.js"></script>
 <script async defer 
-        src="https://maps.googleapis.com/maps/api/js?key={{ site.google_api.maps_key }}&callback=initMap">
+        src="https://maps.googleapis.com/maps/api/js?key={{ site.google_api.maps_key }}&libraries=marker&callback=initMap">
 </script>
 

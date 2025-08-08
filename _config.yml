@@ -17,6 +17,7 @@ plugins:
 google_api:
   maps_key: "AIzaSyCz-JlN59A7S_6SKYL0K6sIPXEMYU8QdWs"
   weather_key: "AIzaSyCz-JlN59A7S_6SKYL0K6sIPXEMYU8QdWs"
+  maps_id: "50ab60f151c805d7db48e783"
 
 # Exclude from processing
 exclude:
