@@ -39,7 +39,7 @@ title: "Bay Area Trail Explorer"
     margin-right: 10px;
 }
 
-#trip-date-label, #length-label, #elevation-label {
+#trip-date-label, #length-label, #elevation-label, #rating-label {
     font-weight: bold;
     color: #2c5530;
     min-width: 120px;
@@ -116,7 +116,7 @@ title: "Bay Area Trail Explorer"
         <label for="difficulty-filter">Difficulty:</label>
         <select id="difficulty-filter">
             <option value="">All</option>
-            <option value="Easy">Easy</option>
+            <option value="Easy" selected>Easy</option>
             <option value="Moderate">Moderate</option>
             <option value="Hard">Hard</option>
         </select>
@@ -135,9 +135,14 @@ title: "Bay Area Trail Explorer"
     </div>
     
     <div class="filter-group">
+        <label for="rating-filter">Min Star Rating:</label>
+        <input type="range" id="rating-filter" min="1" max="5" value="4.7" step="0.1">
+        <span id="rating-label">All ratings</span>
+    </div>
+    
+    <div class="filter-group">
         <label for="trip-date">Trip Date:</label>
-        <input type="range" id="trip-date" min="0" max="9" value="0" step="1">
-        <span id="trip-date-label">Today</span>
+        <input type="date" id="trip-date">
     </div>
     
     <div class="filter-group">
@@ -255,18 +260,26 @@ async function loadTrailData() {
             updateElevationLabel();
             applyFilters();
         });
-        document.getElementById('trip-date').addEventListener('input', function() {
-            updateTripDateLabel();
+        document.getElementById('rating-filter').addEventListener('input', function() {
+            updateRatingLabel();
+            applyFilters();
+        });
+        document.getElementById('trip-date').addEventListener('change', function() {
             applyFilters();
             updateAllWeatherDisplays();
             refreshTemperatureOverlay();
         });
         
         // Set default to upcoming Saturday and update labels
-        document.getElementById('trip-date').value = getUpcomingSaturday();
-        updateTripDateLabel();
+        setDefaultTripDate();
         updateLengthLabel();
         updateElevationLabel();
+        updateRatingLabel();
+        
+        // Apply initial filters to reflect default selections
+        setTimeout(() => {
+            applyFilters();
+        }, 100);
         
         // Turn on temperature overlay by default
         setTimeout(() => {
@@ -437,38 +450,41 @@ function createInfoWindowContent(trail) {
 
 async function loadWeatherForTrail(trail, marker) {
     const key = `${trail.latitude},${trail.longitude}`;
-    const tripDate = parseInt(document.getElementById('trip-date').value);
-    const cacheKey = `${key}-${tripDate}`;
+    const tripDateValue = document.getElementById('trip-date').value;
+    const tripDate = calculateDaysFromToday(tripDateValue);
     
-    if (weatherCache[cacheKey]) {
-        updateWeatherDisplay(trail, weatherCache[cacheKey], tripDate);
-        return;
+    
+    // Cache the full forecast under the location key
+    const locationKey = `${trail.latitude},${trail.longitude}`;
+    
+    if (!weatherCache[locationKey]) {
+        const forecast = await fetchWeatherForecast(trail.latitude, trail.longitude);
+        if (forecast) {
+            weatherCache[locationKey] = forecast;
+        }
     }
     
-    const forecast = await fetchWeatherForecast(trail.latitude, trail.longitude);
-    if (forecast) {
-        console.log('Weather API response:', forecast); // Debug log
-        weatherCache[cacheKey] = forecast;
-    }
-    updateWeatherDisplay(trail, forecast, tripDate);
+    updateWeatherDisplay(trail, weatherCache[locationKey], tripDate, tripDateValue);
 }
 
-function updateWeatherDisplay(trail, forecast, tripDate) {
+function updateWeatherDisplay(trail, forecast, tripDate, tripDateValue) {
     const weatherDiv = document.getElementById(`weather-${trail.latitude}-${trail.longitude}`);
     
     if (!weatherDiv) return;
     
+    // Parse the date string manually to avoid timezone issues
+    const selectedDate = parseLocalDate(tripDateValue);
+    const dateText = formatDateForDisplay(selectedDate, tripDate);
     
-    if (forecast && forecast.forecastDays && forecast.forecastDays[tripDate]) {
+    
+    if (forecast && forecast.forecastDays && tripDate < forecast.forecastDays.length && forecast.forecastDays[tripDate]) {
         const dayForecast = forecast.forecastDays[tripDate];
         const temp = Math.round(dayForecast.maxTemperature?.degrees || 0);
         const condition = dayForecast.daytimeForecast?.weatherCondition?.description?.text || 'Unknown';
         const precipChance = dayForecast.daytimeForecast?.precipitation?.probability?.percent || 0;
         
-        const dateText = tripDate === 0 ? 'Today' : tripDate === 1 ? 'Tomorrow' : `In ${tripDate} days`;
         weatherDiv.innerHTML = `🌡️ ${dateText}: ${temp}°C, ${condition} ${precipChance > 30 ? `(${precipChance}% rain)` : ''}`;
     } else {
-        const dateText = tripDate === 0 ? 'Today' : tripDate === 1 ? 'Tomorrow' : `In ${tripDate} days`;
         weatherDiv.innerHTML = `🌡️ ${dateText}: Weather data unavailable (day ${tripDate}/${forecast?.forecastDays?.length || 0})`;
     }
 }
@@ -477,6 +493,7 @@ function applyFilters() {
     const difficulty = document.getElementById('difficulty-filter').value;
     const maxLength = parseFloat(document.getElementById('length-filter').value);
     const maxElevation = parseFloat(document.getElementById('elevation-filter').value);
+    const minRating = parseFloat(document.getElementById('rating-filter').value);
     
     filteredTrails = trails.filter(trail => {
         // Difficulty filter
@@ -494,6 +511,12 @@ function applyFilters() {
             if (trailElevation > maxElevation) return false;
         }
         
+        // Rating filter
+        if (minRating > 1) {
+            const trailRating = parseFloat(trail.stars || '0');
+            if (trailRating < minRating) return false;
+        }
+        
         return true;
     });
     
@@ -502,17 +525,16 @@ function applyFilters() {
 }
 
 function resetFilters() {
-    document.getElementById('difficulty-filter').value = '';
+    document.getElementById('difficulty-filter').value = 'Easy';
     document.getElementById('length-filter').value = '20';
     document.getElementById('elevation-filter').value = '5000';
-    document.getElementById('trip-date').value = getUpcomingSaturday();
-    updateTripDateLabel();
+    document.getElementById('rating-filter').value = '4.7';
+    setDefaultTripDate();
     updateLengthLabel();
     updateElevationLabel();
+    updateRatingLabel();
     
-    filteredTrails = trails;
-    updateTrailStats();
-    createMarkers();
+    applyFilters();
 }
 
 function findTrailsNearMe() {
@@ -557,13 +579,13 @@ function updateURLParams() {
     
     const difficulty = document.getElementById('difficulty-filter').value;
     const maxLength = document.getElementById('length-filter').value;
-    const features = document.getElementById('features-filter').value;
+    const minRating = document.getElementById('rating-filter').value;
     const tripDate = document.getElementById('trip-date').value;
     
     if (difficulty) params.set('difficulty', difficulty);
-    if (maxLength) params.set('maxLength', maxLength);
-    if (features) params.set('features', features);
-    if (tripDate !== '0') params.set('tripDate', tripDate);
+    if (maxLength && maxLength !== '20') params.set('maxLength', maxLength);
+    if (minRating && minRating !== '1') params.set('minRating', minRating);
+    if (tripDate) params.set('tripDate', tripDate);
     
     const newUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
     window.history.pushState({}, '', newUrl);
@@ -574,11 +596,16 @@ function loadURLParams() {
     
     if (params.get('difficulty')) document.getElementById('difficulty-filter').value = params.get('difficulty');
     if (params.get('maxLength')) document.getElementById('length-filter').value = params.get('maxLength');
-    if (params.get('features')) document.getElementById('features-filter').value = params.get('features');
+    if (params.get('minRating')) document.getElementById('rating-filter').value = params.get('minRating');
     if (params.get('tripDate')) document.getElementById('trip-date').value = params.get('tripDate');
+    
+    // Update labels after loading URL params
+    updateLengthLabel();
+    updateElevationLabel();
+    updateRatingLabel();
 }
 
-// Helper functions for date slider
+// Helper functions for date handling (keeping for backward compatibility)
 function getUpcomingSaturday() {
     const today = new Date();
     const dayOfWeek = today.getDay(); // 0 = Sunday, 6 = Saturday
@@ -592,31 +619,6 @@ function getUpcomingSaturday() {
     } else {
         // Monday-Friday, Saturday is (6 - dayOfWeek) days away
         return 6 - dayOfWeek;
-    }
-}
-
-function updateTripDateLabel() {
-    const slider = document.getElementById('trip-date');
-    const label = document.getElementById('trip-date-label');
-    const value = parseInt(slider.value);
-    
-    const today = new Date();
-    const targetDate = new Date(today);
-    targetDate.setDate(today.getDate() + value);
-    
-    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    
-    const dayName = dayNames[targetDate.getDay()];
-    const month = monthNames[targetDate.getMonth()];
-    const day = targetDate.getDate();
-    
-    if (value === 0) {
-        label.textContent = 'Today';
-    } else if (value === 1) {
-        label.textContent = 'Tomorrow';
-    } else {
-        label.textContent = `${dayName}, ${month} ${day}`;
     }
 }
 
@@ -642,6 +644,39 @@ function updateElevationLabel() {
     } else {
         label.textContent = `≤ ${value} ft`;
     }
+}
+
+function updateRatingLabel() {
+    const slider = document.getElementById('rating-filter');
+    const label = document.getElementById('rating-label');
+    const value = parseFloat(slider.value);
+    
+    if (value <= 1) {
+        label.textContent = 'All ratings';
+    } else {
+        label.textContent = `≥ ${value}★`;
+    }
+}
+
+function setDefaultTripDate() {
+    const today = new Date();
+    const upcomingSaturday = new Date(today);
+    const dayOfWeek = today.getDay(); // 0 = Sunday, 6 = Saturday
+    
+    if (dayOfWeek === 6) {
+        // Today is Saturday, use today
+        upcomingSaturday.setDate(today.getDate());
+    } else if (dayOfWeek === 0) {
+        // Today is Sunday, Saturday is 6 days away
+        upcomingSaturday.setDate(today.getDate() + 6);
+    } else {
+        // Monday-Friday, Saturday is (6 - dayOfWeek) days away
+        upcomingSaturday.setDate(today.getDate() + (6 - dayOfWeek));
+    }
+    
+    // Format date as YYYY-MM-DD for the date input
+    const formattedDate = upcomingSaturday.toISOString().split('T')[0];
+    document.getElementById('trip-date').value = formattedDate;
 }
 
 function updateTrailLabelsVisibility() {
@@ -741,17 +776,67 @@ function calculateDistance(pos1, pos2) {
 
 // Update all weather displays when date changes
 function updateAllWeatherDisplays() {
-    const tripDate = parseInt(document.getElementById('trip-date').value);
+    const tripDateValue = document.getElementById('trip-date').value;
+    const tripDate = calculateDaysFromToday(tripDateValue);
     
     // Update all visible weather displays
     filteredTrails.forEach(trail => {
         const weatherDiv = document.getElementById(`weather-${trail.latitude}-${trail.longitude}`);
         if (weatherDiv) {
-            const cacheKey = `${trail.latitude},${trail.longitude}-${tripDate}`;
-            const forecast = weatherCache[cacheKey];
-            updateWeatherDisplay(trail, forecast, tripDate);
+            const locationKey = `${trail.latitude},${trail.longitude}`;
+            const forecast = weatherCache[locationKey];
+            updateWeatherDisplay(trail, forecast, tripDate, tripDateValue);
         }
     });
+}
+
+function parseLocalDate(dateString) {
+    if (!dateString) return null;
+    
+    // Parse the date string (YYYY-MM-DD) manually to avoid timezone issues
+    const parts = dateString.split('-');
+    if (parts.length !== 3) return null;
+    
+    const year = parseInt(parts[0]);
+    const month = parseInt(parts[1]) - 1; // Month is 0-indexed
+    const day = parseInt(parts[2]);
+    
+    return new Date(year, month, day);
+}
+
+function calculateDaysFromToday(dateString) {
+    if (!dateString) return 0;
+    
+    const selectedDate = parseLocalDate(dateString);
+    if (!selectedDate) return 0;
+    
+    const today = new Date();
+    
+    // Create new Date objects using local timezone
+    const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const selectedMidnight = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
+    
+    const diffTime = selectedMidnight.getTime() - todayMidnight.getTime();
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    
+    
+    return Math.max(0, Math.min(9, diffDays)); // Weather API only has 10 days (0-9)
+}
+
+function formatDateForDisplay(date, daysFromToday) {
+    if (!date || isNaN(date.getTime())) return 'Invalid Date';
+    
+    if (daysFromToday === 0) return 'Today';
+    if (daysFromToday === 1) return 'Tomorrow';
+    
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    
+    const dayName = dayNames[date.getDay()];
+    const month = monthNames[date.getMonth()];
+    const day = date.getDate();
+    
+    return `${dayName}, ${month} ${day}`;
 }
 
 // Create temperature overlay circles from temperature data
@@ -828,14 +913,16 @@ function refreshTemperatureOverlay() {
 
 // Temperature heatmap functions
 async function loadTemperatureHeatmap() {
-    const tripDate = parseInt(document.getElementById('trip-date').value);
+    const tripDateValue = document.getElementById('trip-date').value;
+    const tripDate = calculateDaysFromToday(tripDateValue);
     const heatmapData = [];
+    
     
     // Use existing trail locations and their cached weather data
     // This avoids making hundreds of new API calls
     filteredTrails.forEach(trail => {
-        const cacheKey = `${trail.latitude},${trail.longitude}-${tripDate}`;
-        const forecast = weatherCache[cacheKey];
+        const locationKey = `${trail.latitude},${trail.longitude}`;
+        const forecast = weatherCache[locationKey];
         
         if (forecast && forecast.forecastDays && forecast.forecastDays[tripDate]) {
             const temp = forecast.forecastDays[tripDate].maxTemperature?.degrees || 0;
@@ -877,24 +964,25 @@ async function loadTemperatureHeatmap() {
         
         for (const point of strategicPoints) {
             try {
-                const cacheKey = `${point.lat},${point.lng}-${tripDate}`;
+                const locationKey = `${point.lat},${point.lng}`;
                 
-                if (!weatherCache[cacheKey]) {
+                if (!weatherCache[locationKey]) {
                     const forecast = await fetchWeatherForecast(point.lat, point.lng);
                     
                     if (forecast) {
-                        weatherCache[cacheKey] = forecast;
-                        
-                        if (forecast.forecastDays && forecast.forecastDays[tripDate]) {
-                            const temp = forecast.forecastDays[tripDate].maxTemperature?.degrees || 0;
-                            const intensity = Math.max(0, Math.min(1, (temp - 10) / 25));
-                            
-                            heatmapData.push({
-                                location: new google.maps.LatLng(point.lat, point.lng),
-                                weight: intensity
-                            });
-                        }
+                        weatherCache[locationKey] = forecast;
                     }
+                }
+                
+                const forecast = weatherCache[locationKey];
+                if (forecast && forecast.forecastDays && forecast.forecastDays[tripDate]) {
+                    const temp = forecast.forecastDays[tripDate].maxTemperature?.degrees || 0;
+                    const intensity = Math.max(0, Math.min(1, (temp - 10) / 25));
+                    
+                    heatmapData.push({
+                        location: new google.maps.LatLng(point.lat, point.lng),
+                        weight: intensity
+                    });
                 }
                 
                 // Delay between API calls
